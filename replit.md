@@ -55,8 +55,47 @@ Preferred communication style: Simple, everyday language.
 - **GitHub API**: Repository access and Git operations via Octokit REST client
 
 ### Authentication Services
-- **Replit Connectors**: Managed OAuth integration for GitHub authentication
+- **Replit Connectors**: Managed OAuth integration for GitHub authentication (development)
+- **GitHub Personal Access Tokens**: Direct API authentication for production deployments
 - **GitHub OAuth**: Secure repository access with automatic token refresh
+
+## Production Deployment Configuration
+
+### GitHub Authentication Setup
+
+The application supports two authentication methods:
+
+#### Development Environment (Replit)
+- Uses Replit Connectors for seamless GitHub integration
+- Authentication is managed automatically through Replit's OAuth system
+- No manual token configuration required
+
+#### Production Environment (External Hosting)
+- Requires GitHub Personal Access Token configuration
+- Set environment variable: `GITHUB_TOKEN` or `GITHUB_PERSONAL_ACCESS_TOKEN`
+- Token must have the following permissions:
+  - `repo` (Full repository access)
+  - `read:user` (User profile information)
+  - `read:org` (Organization membership)
+
+#### Creating a GitHub Personal Access Token
+1. Visit [GitHub Settings > Developer Settings > Personal Access Tokens](https://github.com/settings/tokens)
+2. Click "Generate new token (classic)"
+3. Select required scopes: `repo`, `read:user`, `read:org`
+4. Generate and copy the token
+5. Set as environment variable in your hosting platform
+
+#### Environment Variables for Production
+```bash
+# GitHub Authentication (choose one)
+GITHUB_TOKEN=your_github_personal_access_token
+# OR
+GITHUB_PERSONAL_ACCESS_TOKEN=your_github_personal_access_token
+
+# Other required environment variables
+NODE_ENV=production
+PORT=5000
+```
 
 ### Development Dependencies
 - **Drizzle Kit**: Database schema management and migration tooling
