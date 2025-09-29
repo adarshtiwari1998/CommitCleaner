@@ -163,19 +163,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
 
       try {
-        // Delete the specified commits
-        const { deleteReplitCommits } = await import("./github");
-        const result = await deleteReplitCommits(repository.url, commitShas);
+        // Clean the commit messages by removing Replit auto-generated text
+        const { cleanReplitCommitMessages } = await import("./github");
+        const result = await cleanReplitCommitMessages(repository.url, commitShas);
         
         // Update repository status based on result
         const updatedRepo = await storage.updateRepository(req.params.id, {
-          status: result.deletedCount > 0 ? "clean" : "error",
-          replitCommitsFound: Math.max(0, (repository.replitCommitsFound || 0) - result.deletedCount),
+          status: result.cleanedCount > 0 ? "clean" : "error",
+          replitCommitsFound: Math.max(0, (repository.replitCommitsFound || 0) - result.cleanedCount),
         });
 
         res.json({
           repository: updatedRepo,
-          deletedCount: result.deletedCount,
+          cleanedCount: result.cleanedCount,
           errors: result.errors,
         });
       } catch (cleanupError: any) {

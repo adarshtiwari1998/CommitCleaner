@@ -206,7 +206,7 @@ export async function scanForReplitCommits(url: string): Promise<ReplitCommit[]>
   }
 }
 
-export async function deleteReplitCommits(url: string, commitShas: string[]): Promise<{ deletedCount: number; errors: string[] }> {
+export async function cleanReplitCommitMessages(url: string, commitShas: string[]): Promise<{ cleanedCount: number; errors: string[] }> {
   const client = await getUncachableGitHubClient();
   
   // Extract owner and repo from GitHub URL
@@ -219,46 +219,220 @@ export async function deleteReplitCommits(url: string, commitShas: string[]): Pr
   const repoName = repo.replace(/\.git$/, '');
   
   try {
-    // For safety, we'll simulate the deletion process
-    // In a real implementation, this would involve complex git operations
     const errors: string[] = [];
-    let deletedCount = 0;
+    let cleanedCount = 0;
     
-    // Simulate checking each commit
-    for (const sha of commitShas) {
-      try {
-        // Check if commit exists
-        await client.rest.repos.getCommit({
-          owner,
-          repo: repoName,
-          ref: sha,
-        });
-        
-        // For now, we simulate successful deletion
-        // In reality, this would require git rebase operations
-        deletedCount++;
-        console.log(`Would delete commit: ${sha}`);
-        
-      } catch (error: any) {
-        if (error.status === 404) {
-          errors.push(`Commit ${sha} not found`);
-        } else {
-          errors.push(`Failed to access commit ${sha}: ${error.message}`);
+    console.log('🧹 Starting commit message cleanup - removing Replit auto-generated text...');
+    
+    // Step 1: Get repository info to find the default branch
+    const { data: repoInfo } = await client.rest.repos.get({
+      owner,
+      repo: repoName,
+    });
+    const defaultBranch = repoInfo.default_branch;
+    
+    // Step 2: Get ALL commits on the default branch (up to 500 commits)
+    const allCommits: any[] = [];
+    let page = 1;
+    const perPage = 100;
+    
+    while (allCommits.length < 500) { // Safety limit to prevent infinite loop
+      const { data: commits } = await client.rest.repos.listCommits({
+        owner,
+        repo: repoName,
+        sha: defaultBranch,
+        per_page: perPage,
+        page: page,
+      });
+      
+      if (commits.length === 0) break;
+      allCommits.push(...commits);
+      
+      // If we got all the commits we need, break
+      if (commitShas.every(sha => allCommits.some(c => c.sha === sha))) {
+        break;
+      }
+      
+      page++;
+    }
+    
+    // Step 3: Verify all target commits are found
+    const missingCommits = commitShas.filter(sha => !allCommits.some(c => c.sha === sha));
+    if (missingCommits.length > 0) {
+      throw new Error(`Target commits not found in recent history: ${missingCommits.join(', ')}`);
+    }
+    
+    // Step 4: Build the new commit chain from oldest to newest
+    console.log(`📋 Processing ${allCommits.length} commits to rebuild chain...`);
+    
+    // Reverse to start from oldest commit
+    const commitsToProcess = allCommits.reverse();
+    let currentSha = '';
+    
+    for (let i = 0; i < commitsToProcess.length; i++) {
+      const commit = commitsToProcess[i];
+      const isTargetCommit = commitShas.includes(commit.sha);
+      
+      if (isTargetCommit) {
+        try {
+          // Get the full commit details
+          const { data: fullCommit } = await client.rest.repos.getCommit({
+            owner,
+            repo: repoName,
+            ref: commit.sha,
+          });
+          
+          // Clean the commit message
+          const cleanedMessage = cleanCommitMessage(fullCommit.commit.message);
+          
+          if (cleanedMessage !== fullCommit.commit.message) {
+            console.log(`🧹 Cleaning commit ${commit.sha.substring(0, 8)}: "${fullCommit.commit.message.substring(0, 50)}..."`);
+            console.log(`✨ Cleaned to: "${cleanedMessage.substring(0, 50)}..."`);
+            
+            // Create new commit with cleaned message
+            const { data: newCommit } = await client.rest.git.createCommit({
+              owner,
+              repo: repoName,
+              message: cleanedMessage,
+              tree: fullCommit.commit.tree.sha,
+              parents: currentSha ? [currentSha] : [], // Chain to previous commit or make it root
+              author: {
+                name: fullCommit.commit.author?.name || 'Unknown',
+                email: fullCommit.commit.author?.email || 'unknown@example.com',
+                date: fullCommit.commit.author?.date || new Date().toISOString()
+              },
+              committer: {
+                name: fullCommit.commit.committer?.name || 'Unknown',
+                email: fullCommit.commit.committer?.email || 'unknown@example.com',
+                date: new Date().toISOString() // Use current time for committer
+              }
+            });
+            
+            currentSha = newCommit.sha;
+            cleanedCount++;
+          } else {
+            // Message doesn't need cleaning, but still need to recreate to maintain chain
+            const { data: newCommit } = await client.rest.git.createCommit({
+              owner,
+              repo: repoName,
+              message: fullCommit.commit.message,
+              tree: fullCommit.commit.tree.sha,
+              parents: currentSha ? [currentSha] : [],
+              author: {
+                name: fullCommit.commit.author?.name || 'Unknown',
+                email: fullCommit.commit.author?.email || 'unknown@example.com',
+                date: fullCommit.commit.author?.date || new Date().toISOString()
+              },
+              committer: {
+                name: fullCommit.commit.committer?.name || 'Unknown',
+                email: fullCommit.commit.committer?.email || 'unknown@example.com',
+                date: fullCommit.commit.committer?.date || new Date().toISOString()
+              }
+            });
+            
+            currentSha = newCommit.sha;
+          }
+          
+        } catch (error: any) {
+          console.error(`Failed to process commit ${commit.sha}:`, error);
+          errors.push(`Failed to process commit ${commit.sha}: ${error.message}`);
+          throw error; // Don't continue with broken chain
+        }
+      } else {
+        // Not a target commit, still need to recreate to maintain chain integrity
+        try {
+          const { data: fullCommit } = await client.rest.repos.getCommit({
+            owner,
+            repo: repoName,
+            ref: commit.sha,
+          });
+          
+          const { data: newCommit } = await client.rest.git.createCommit({
+            owner,
+            repo: repoName,
+            message: fullCommit.commit.message,
+            tree: fullCommit.commit.tree.sha,
+            parents: currentSha ? [currentSha] : [],
+            author: {
+              name: fullCommit.commit.author?.name || 'Unknown',
+              email: fullCommit.commit.author?.email || 'unknown@example.com',
+              date: fullCommit.commit.author?.date || new Date().toISOString()
+            },
+            committer: {
+              name: fullCommit.commit.committer?.name || 'Unknown',
+              email: fullCommit.commit.committer?.email || 'unknown@example.com',
+              date: fullCommit.commit.committer?.date || new Date().toISOString()
+            }
+          });
+          
+          currentSha = newCommit.sha;
+          
+        } catch (error: any) {
+          console.error(`Failed to recreate commit ${commit.sha}:`, error);
+          errors.push(`Failed to recreate commit ${commit.sha}: ${error.message}`);
+          throw error;
         }
       }
     }
     
-    // Note: This is still a simulation - actual deletion would be complex
-    if (deletedCount > 0) {
-      console.log(`Simulated deletion of ${deletedCount} commits. In a real implementation, this would perform git rebase operations.`);
+    // Step 5: Update the branch to point to the new chain head
+    if (currentSha) {
+      try {
+        console.log(`📌 Updating ${defaultBranch} branch to point to new commit chain head: ${currentSha}`);
+        
+        await client.rest.git.updateRef({
+          owner,
+          repo: repoName,
+          ref: `heads/${defaultBranch}`,
+          sha: currentSha,
+          force: true
+        });
+        
+        console.log(`✅ Successfully cleaned ${cleanedCount} commit messages out of ${allCommits.length} total commits!`);
+        console.log(`⚠️  Note: History was rewritten. All collaborators should pull the changes.`);
+        
+      } catch (error: any) {
+        console.error('Failed to update branch:', error);
+        throw new Error(`Processed ${cleanedCount} commits but failed to update branch: ${error.message}`);
+      }
     }
     
     return {
-      deletedCount,
+      cleanedCount,
       errors
     };
     
   } catch (error: any) {
-    throw new Error(`Failed to delete commits: ${error.message}`);
+    console.error('Commit message cleanup failed:', error);
+    throw new Error(`Failed to clean commit messages: ${error.message}`);
   }
+}
+
+function cleanCommitMessage(originalMessage: string): string {
+  // Remove Replit auto-generated text patterns
+  let cleaned = originalMessage;
+  
+  // Remove Replit metadata patterns
+  const replitPatterns = [
+    /Replit-Commit-Author:.*?\n?/gi,
+    /Replit-Commit-Session-Id:.*?\n?/gi,
+    /Replit-Commit-Checkpoint-Type:.*?\n?/gi,
+    /Replit Prompt:.*?\n?/gi,
+    /Auto-generated by Replit.*?\n?/gi,
+    /\n\s*\n\s*\n/g, // Remove multiple empty lines
+  ];
+  
+  for (const pattern of replitPatterns) {
+    cleaned = cleaned.replace(pattern, '');
+  }
+  
+  // Clean up extra whitespace and newlines
+  cleaned = cleaned.trim();
+  
+  // If the message became empty or too short, provide a default
+  if (!cleaned || cleaned.length < 5) {
+    cleaned = 'Updated files'; // Basic fallback message
+  }
+  
+  return cleaned;
 }
