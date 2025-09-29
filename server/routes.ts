@@ -200,7 +200,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // GET /api/github/status - Check GitHub connection status
   app.get("/api/github/status", async (req, res) => {
     try {
-      const { getUncachableGitHubClient } = await import("./github");
+      const { getUncachableGitHubClient, getAuthMethod, isReplitEnvironment } = await import("./github");
       const client = await getUncachableGitHubClient();
       
       // Test the connection by getting user info
@@ -211,13 +211,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
         username: user.login,
         name: user.name,
         avatar: user.avatar_url,
-        permissions: ['Repository access', 'User info']
+        permissions: ['Repository access', 'User info'],
+        authMethod: getAuthMethod(),
+        isReplitEnvironment: isReplitEnvironment(),
+        hasEnvironmentToken: !!(process.env.GITHUB_TOKEN || process.env.GITHUB_PERSONAL_ACCESS_TOKEN)
       });
     } catch (error: any) {
       console.error("GitHub connection check failed:", error);
+      const { isReplitEnvironment } = await import("./github");
       res.json({
         connected: false,
-        error: error.message
+        error: error.message,
+        authMethod: null,
+        isReplitEnvironment: isReplitEnvironment(),
+        hasEnvironmentToken: !!(process.env.GITHUB_TOKEN || process.env.GITHUB_PERSONAL_ACCESS_TOKEN)
       });
     }
   });

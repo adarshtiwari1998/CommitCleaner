@@ -25,6 +25,9 @@ interface GitHubStatus {
   avatar?: string;
   permissions?: string[];
   error?: string;
+  authMethod?: 'replit' | 'token' | null;
+  isReplitEnvironment?: boolean;
+  hasEnvironmentToken?: boolean;
 }
 
 export default function Settings() {
@@ -49,14 +52,20 @@ export default function Settings() {
 
   const handleDisconnectGithub = () => {
     console.log('Disconnecting GitHub account');
-    // Note: Actual disconnection would need to be handled through Replit Connectors
-    alert('GitHub disconnection must be done through Replit Settings');
+    if (githubStatus?.authMethod === 'replit') {
+      alert('GitHub disconnection must be done through Replit Settings');
+    } else {
+      alert('To disconnect, remove the GITHUB_TOKEN environment variable from your deployment settings');
+    }
   };
 
   const handleConnectGithub = () => {
     console.log('Connecting GitHub account');
-    // Note: Actual connection would need to be handled through Replit Connectors
-    alert('GitHub connection must be set up through Replit Connectors');
+    if (githubStatus?.isReplitEnvironment) {
+      alert('GitHub connection must be set up through Replit Connectors');
+    } else {
+      alert('For production deployment, set GITHUB_TOKEN or GITHUB_PERSONAL_ACCESS_TOKEN environment variable with your GitHub Personal Access Token');
+    }
   };
 
   const handleClearAllData = () => {
@@ -107,9 +116,14 @@ export default function Settings() {
             
             {githubStatus?.connected ? (
               <div className="space-y-3">
-                <div className="text-sm text-muted-foreground">
+                <div className="text-sm text-muted-foreground space-y-1">
                   <p>Account: <span className="font-mono">{githubStatus.username || 'Unknown'}</span></p>
                   <p>Permissions: {githubStatus.permissions?.join(', ') || 'Repository access, User info'}</p>
+                  <p>Auth Method: 
+                    <Badge variant="outline" className="ml-2 text-xs">
+                      {githubStatus.authMethod === 'replit' ? 'Replit Connector' : 'Personal Access Token'}
+                    </Badge>
+                  </p>
                 </div>
                 <Button 
                   variant="outline" 
@@ -122,7 +136,30 @@ export default function Settings() {
             ) : (
               <div className="space-y-3">
                 {githubStatus?.error && (
-                  <p className="text-sm text-destructive">{githubStatus.error}</p>
+                  <Alert>
+                    <AlertTriangle className="h-4 w-4" />
+                    <AlertDescription>
+                      <strong>Connection Error:</strong> {githubStatus.error}
+                      {githubStatus?.isReplitEnvironment && !githubStatus?.hasEnvironmentToken && (
+                        <div className="mt-2">
+                          <p>You're in a Replit environment. Click "Connect GitHub Account" to set up the integration.</p>
+                        </div>
+                      )}
+                      {!githubStatus?.isReplitEnvironment && !githubStatus?.hasEnvironmentToken && (
+                        <div className="mt-2">
+                          <p>For production deployment, you need to set a <code className="text-xs bg-muted px-1 rounded">GITHUB_TOKEN</code> environment variable with your Personal Access Token.</p>
+                          <a 
+                            href="https://github.com/settings/tokens" 
+                            target="_blank" 
+                            rel="noopener noreferrer"
+                            className="text-blue-600 dark:text-blue-400 hover:underline inline-flex items-center gap-1 mt-1"
+                          >
+                            Create Personal Access Token <ExternalLink className="h-3 w-3" />
+                          </a>
+                        </div>
+                      )}
+                    </AlertDescription>
+                  </Alert>
                 )}
                 <Button 
                   onClick={handleConnectGithub}

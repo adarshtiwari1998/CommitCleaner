@@ -1,39 +1,83 @@
 import { Octokit } from '@octokit/rest';
 
 let connectionSettings: any;
+let authMethod: 'replit' | 'token' | null = null;
 
 async function getAccessToken() {
-  if (connectionSettings && connectionSettings.settings.expires_at && new Date(connectionSettings.settings.expires_at).getTime() > Date.now()) {
+  // Check if we have a cached token that's still valid
+  if (connectionSettings?.settings?.expires_at && new Date(connectionSettings.settings.expires_at).getTime() > Date.now()) {
     return connectionSettings.settings.access_token;
   }
-  
-  const hostname = process.env.REPLIT_CONNECTORS_HOSTNAME
+
+  // Try Replit Connectors first (for development environment)
+  try {
+    const token = await tryReplitConnectorAuth();
+    if (token) {
+      authMethod = 'replit';
+      return token;
+    }
+  } catch (error) {
+    console.log('Replit connector auth not available, falling back to GitHub token');
+  }
+
+  // Fall back to GitHub Personal Access Token (for production environment)
+  const githubToken = process.env.GITHUB_TOKEN || process.env.GITHUB_PERSONAL_ACCESS_TOKEN;
+  if (githubToken) {
+    authMethod = 'token';
+    // Cache the token with a long expiry for simplicity
+    connectionSettings = {
+      settings: {
+        access_token: githubToken,
+        expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString() // 24 hours
+      }
+    };
+    return githubToken;
+  }
+
+  throw new Error('GitHub authentication not configured. Please set up either Replit GitHub connector or provide GITHUB_TOKEN environment variable.');
+}
+
+async function tryReplitConnectorAuth(): Promise<string | null> {
+  const hostname = process.env.REPLIT_CONNECTORS_HOSTNAME;
   const xReplitToken = process.env.REPL_IDENTITY 
     ? 'repl ' + process.env.REPL_IDENTITY 
     : process.env.WEB_REPL_RENEWAL 
     ? 'depl ' + process.env.WEB_REPL_RENEWAL 
     : null;
 
-  if (!xReplitToken) {
-    throw new Error('X_REPLIT_TOKEN not found for repl/depl');
+  if (!hostname || !xReplitToken) {
+    return null;
   }
 
-  connectionSettings = await fetch(
-    'https://' + hostname + '/api/v2/connection?include_secrets=true&connector_names=github',
-    {
-      headers: {
-        'Accept': 'application/json',
-        'X_REPLIT_TOKEN': xReplitToken
+  try {
+    connectionSettings = await fetch(
+      'https://' + hostname + '/api/v2/connection?include_secrets=true&connector_names=github',
+      {
+        headers: {
+          'Accept': 'application/json',
+          'X_REPLIT_TOKEN': xReplitToken
+        }
       }
+    ).then(res => res.json()).then(data => data.items?.[0]);
+
+    const accessToken = connectionSettings?.settings?.access_token || connectionSettings?.settings?.oauth?.credentials?.access_token;
+    
+    if (connectionSettings && accessToken) {
+      return accessToken;
     }
-  ).then(res => res.json()).then(data => data.items?.[0]);
-
-  const accessToken = connectionSettings?.settings?.access_token || connectionSettings.settings?.oauth?.credentials?.access_token;
-
-  if (!connectionSettings || !accessToken) {
-    throw new Error('GitHub not connected');
+  } catch (error) {
+    console.error('Failed to get Replit connector token:', error);
   }
-  return accessToken;
+
+  return null;
+}
+
+export function getAuthMethod(): 'replit' | 'token' | null {
+  return authMethod;
+}
+
+export function isReplitEnvironment(): boolean {
+  return !!(process.env.REPLIT_CONNECTORS_HOSTNAME && (process.env.REPL_IDENTITY || process.env.WEB_REPL_RENEWAL));
 }
 
 // WARNING: Never cache this client.
