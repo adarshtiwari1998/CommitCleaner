@@ -4,25 +4,28 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { CheckCircle, Github, Shield, Zap, AlertTriangle } from "lucide-react";
+import { apiRequest } from "@/lib/queryClient";
 
 export default function AddRepository() {
   const [isLoading, setIsLoading] = useState(false);
   const [successMessage, setSuccessMessage] = useState("");
+  const [errorMessage, setErrorMessage] = useState("");
 
   const handleAddRepository = async (url: string) => {
     setIsLoading(true);
     setSuccessMessage("");
+    setErrorMessage("");
     
     try {
       console.log('Adding repository:', url);
       
-      // Simulate API call
-      //todo: remove mock functionality - replace with real API call
-      await new Promise(resolve => setTimeout(resolve, 1500));
-      
-      setSuccessMessage(`Repository ${url} has been added successfully!`);
-    } catch (error) {
+      const response = await apiRequest('POST', '/api/repositories', { url });
+      const repository = await response.json();
+
+      setSuccessMessage(`Repository ${repository.owner}/${repository.name} has been added successfully!`);
+    } catch (error: any) {
       console.error('Failed to add repository:', error);
+      setErrorMessage(error.message || 'Failed to add repository');
     } finally {
       setIsLoading(false);
     }
@@ -64,6 +67,13 @@ export default function AddRepository() {
         <Alert data-testid="alert-success">
           <CheckCircle className="h-4 w-4" />
           <AlertDescription>{successMessage}</AlertDescription>
+        </Alert>
+      )}
+
+      {errorMessage && (
+        <Alert variant="destructive" data-testid="alert-error">
+          <AlertTriangle className="h-4 w-4" />
+          <AlertDescription>{errorMessage}</AlertDescription>
         </Alert>
       )}
 

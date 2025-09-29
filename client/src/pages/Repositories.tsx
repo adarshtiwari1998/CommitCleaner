@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { RepositoryCard, type Repository } from "@/components/RepositoryCard";
 import { ScanProgress, type ScanResult } from "@/components/ScanProgress";
 import { CommitPreview, type ReplitCommit } from "@/components/CommitPreview";
@@ -7,60 +7,48 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Search, Filter, RefreshCw } from "lucide-react";
-
-//todo: remove mock functionality - replace with real API calls
-const mockRepositories: Repository[] = [
-  {
-    id: "1",
-    name: "my-awesome-project",
-    owner: "john-doe",
-    url: "https://github.com/john-doe/my-awesome-project",
-    status: "needs_cleanup",
-    lastScanned: new Date(Date.now() - 2 * 60 * 60 * 1000),
-    replitCommitsFound: 5,
-    private: false,
-  },
-  {
-    id: "2",
-    name: "private-repo",
-    owner: "jane-smith", 
-    url: "https://github.com/jane-smith/private-repo",
-    status: "clean",
-    lastScanned: new Date(Date.now() - 24 * 60 * 60 * 1000),
-    replitCommitsFound: 0,
-    private: true,
-  },
-  {
-    id: "3",
-    name: "team-project",
-    owner: "dev-team",
-    url: "https://github.com/dev-team/team-project",
-    status: "pending",
-    private: false,
-  },
-];
-
-const mockCommits: ReplitCommit[] = [
-  {
-    sha: "abc123def456",
-    message: "make careers header sticky and add partnership section to demo and login pages",
-    author: "username",
-    date: new Date(Date.now() - 2 * 60 * 60 * 1000),
-    isReplitGenerated: true,
-    replitPrompt: "Add a sticky header to the careers page and include partnership information in the demo and login pages",
-  },
-  {
-    sha: "def456ghi789", 
-    message: "Replit Chatbox adf1be7",
-    author: "username",
-    date: new Date(Date.now() - 4 * 60 * 60 * 1000),
-    isReplitGenerated: true,
-  },
-];
+import { apiRequest } from "@/lib/queryClient";
+import { useQuery, useMutation } from "@tanstack/react-query";
+import { queryClient } from "@/lib/queryClient";
 
 export default function Repositories() {
-  const [repositories, setRepositories] = useState<Repository[]>(mockRepositories);
+  // Use React Query to fetch repositories
+  const { data: repositories = [], isLoading, refetch } = useQuery<Repository[]>({
+    queryKey: ['/api/repositories'],
+  });
+
+  // Mutations for repository operations
+  const scanMutation = useMutation({
+    mutationFn: async (repositoryId: string) => {
+      const response = await apiRequest('POST', `/api/repositories/${repositoryId}/scan`);
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/repositories'] });
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: async (repositoryId: string) => {
+      await apiRequest('DELETE', `/api/repositories/${repositoryId}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/repositories'] });
+    },
+  });
+
+  const cleanupMutation = useMutation({
+    mutationFn: async (repositoryId: string) => {
+      const response = await apiRequest('POST', `/api/repositories/${repositoryId}/cleanup`);
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/repositories'] });
+    },
+  });
+
   const [scanResults, setScanResults] = useState<ScanResult[]>([]);
+  const [currentCommits, setCurrentCommits] = useState<ReplitCommit[]>([]);
   const [selectedRepository, setSelectedRepository] = useState<Repository | null>(null);
   const [selectedCommits, setSelectedCommits] = useState<Set<string>>(new Set());
   const [cleanupDialogOpen, setCleanupDialogOpen] = useState(false);
@@ -74,76 +62,51 @@ export default function Repositories() {
     return matchesSearch && matchesStatus;
   });
 
-  const handleScanRepository = (id: string) => {
+  const handleScanRepository = async (id: string) => {
     const repo = repositories.find(r => r.id === id);
     if (!repo) return;
 
     console.log('Starting scan for repository:', repo.name);
     
-    // Update repository status
-    setRepositories(prev => prev.map(r => 
-      r.id === id ? { ...r, status: "scanning" } : r
-    ));
-
-    // Add scan progress
-    const scanResult: ScanResult = {
-      repositoryId: id,
-      repositoryName: repo.name,
-      status: "scanning",
-      progress: 0,
-      replitCommitsFound: 0,
-      totalCommitsScanned: 0,
-    };
-    
-    setScanResults(prev => [...prev, scanResult]);
-
-    // Simulate scanning progress
-    //todo: remove mock functionality - replace with real scanning logic
-    const interval = setInterval(() => {
-      setScanResults(prev => prev.map(scan => {
-        if (scan.repositoryId === id && scan.status === "scanning") {
-          const newProgress = Math.min(scan.progress + 10, 100);
-          const newCommitsScanned = Math.floor(newProgress * 1.2);
-          const newReplitCommits = newProgress > 60 ? 5 : 0;
-          
-          if (newProgress === 100) {
-            clearInterval(interval);
-            
-            // Update repository with final results
-            setRepositories(prev => prev.map(r => 
-              r.id === id ? { 
-                ...r, 
-                status: newReplitCommits > 0 ? "needs_cleanup" : "clean",
-                lastScanned: new Date(),
-                replitCommitsFound: newReplitCommits
-              } : r
-            ));
-            
-            return {
-              ...scan,
-              status: "completed",
-              progress: 100,
-              replitCommitsFound: newReplitCommits,
-              totalCommitsScanned: newCommitsScanned,
-            };
-          }
-          
-          return {
-            ...scan,
-            progress: newProgress,
-            totalCommitsScanned: newCommitsScanned,
-            replitCommitsFound: newReplitCommits,
-          };
-        }
-        return scan;
-      }));
-    }, 500);
+    try {
+      const result = await scanMutation.mutateAsync(id);
+      setCurrentCommits(result.commits || []);
+      
+      // Show scan completion
+      const scanResult: ScanResult = {
+        repositoryId: id,
+        repositoryName: repo.name,
+        status: "completed",
+        progress: 100,
+        replitCommitsFound: result.repository?.replitCommitsFound || 0,
+        totalCommitsScanned: result.commits?.length || 0,
+      };
+      setScanResults(prev => [...prev, scanResult]);
+      
+    } catch (error) {
+      console.error('Failed to scan repository:', error);
+      
+      // Show scan error
+      const scanResult: ScanResult = {
+        repositoryId: id,
+        repositoryName: repo.name,
+        status: "error",
+        progress: 0,
+        replitCommitsFound: 0,
+        totalCommitsScanned: 0,
+      };
+      setScanResults(prev => [...prev, scanResult]);
+    }
   };
 
-  const handleRemoveRepository = (id: string) => {
+  const handleRemoveRepository = async (id: string) => {
     console.log('Removing repository:', id);
-    setRepositories(prev => prev.filter(r => r.id !== id));
-    setScanResults(prev => prev.filter(scan => scan.repositoryId !== id));
+    try {
+      await deleteMutation.mutateAsync(id);
+      setScanResults(prev => prev.filter(scan => scan.repositoryId !== id));
+    } catch (error) {
+      console.error('Failed to remove repository:', error);
+    }
   };
 
   const handleCleanupRepository = (id: string) => {
@@ -154,33 +117,23 @@ export default function Repositories() {
     setCleanupDialogOpen(true);
   };
 
-  const handleConfirmCleanup = () => {
+  const handleConfirmCleanup = async () => {
     if (!selectedRepository) return;
     
     console.log('Cleanup confirmed for:', selectedRepository.name);
     
-    // Update repository status to processing
-    setRepositories(prev => prev.map(r => 
-      r.id === selectedRepository.id ? { ...r, status: "processing" } : r
-    ));
-
-    // Simulate cleanup process
-    //todo: remove mock functionality - replace with real cleanup logic
-    setTimeout(() => {
-      setRepositories(prev => prev.map(r => 
-        r.id === selectedRepository.id ? { 
-          ...r, 
-          status: "clean",
-          replitCommitsFound: 0,
-          lastScanned: new Date()
-        } : r
-      ));
-    }, 3000);
+    try {
+      await cleanupMutation.mutateAsync(selectedRepository.id);
+      setCleanupDialogOpen(false);
+      setSelectedRepository(null);
+    } catch (error) {
+      console.error('Failed to cleanup repository:', error);
+    }
   };
 
   const handleSelectAllCommits = (selected: boolean) => {
     if (selected) {
-      setSelectedCommits(new Set(mockCommits.map(c => c.sha)));
+      setSelectedCommits(new Set(currentCommits.map(c => c.sha)));
     } else {
       setSelectedCommits(new Set());
     }
@@ -209,9 +162,9 @@ export default function Repositories() {
             Manage and clean up your GitHub repositories
           </p>
         </div>
-        <Button onClick={() => window.location.reload()} variant="outline" data-testid="button-refresh">
+        <Button onClick={() => refetch()} variant="outline" data-testid="button-refresh" disabled={isLoading}>
           <RefreshCw className="h-4 w-4 mr-2" />
-          Refresh
+          {isLoading ? 'Loading...' : 'Refresh'}
         </Button>
       </div>
 
@@ -269,9 +222,8 @@ export default function Repositories() {
           scans={scanResults}
           onCancel={(repositoryId) => {
             setScanResults(prev => prev.filter(scan => scan.repositoryId !== repositoryId));
-            setRepositories(prev => prev.map(r => 
-              r.id === repositoryId ? { ...r, status: "pending" } : r
-            ));
+            // Note: Repository status will be updated when the query refetches
+            refetch();
           }}
         />
       )}
@@ -300,8 +252,8 @@ export default function Repositories() {
         <div className="space-y-4">
           <h2 className="text-xl font-semibold">Commit Preview</h2>
           <CommitPreview
-            repositoryName="my-awesome-project"
-            commits={mockCommits}
+            repositoryName={selectedRepository?.name || "Repository"}
+            commits={currentCommits}
             selectedCommits={selectedCommits}
             onSelectAll={handleSelectAllCommits}
             onSelectCommit={handleSelectCommit}
