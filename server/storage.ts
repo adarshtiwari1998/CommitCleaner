@@ -49,6 +49,8 @@ export class MemStorage implements IStorage {
     const repository: Repository = { 
       ...insertRepository, 
       id,
+      status: insertRepository.status || "pending",
+      private: insertRepository.private || false,
       lastScanned: null,
       replitCommitsFound: null
     };
