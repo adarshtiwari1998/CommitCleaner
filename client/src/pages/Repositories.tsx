@@ -113,6 +113,12 @@ export default function Repositories() {
     const repo = repositories.find(r => r.id === id);
     if (!repo) return;
     
+    // Only allow cleanup if there are selected commits
+    if (selectedCommits.size === 0) {
+      console.log('No commits selected for cleanup');
+      return;
+    }
+    
     setSelectedRepository(repo);
     setCleanupDialogOpen(true);
   };
@@ -121,11 +127,25 @@ export default function Repositories() {
     if (!selectedRepository) return;
     
     console.log('Cleanup confirmed for:', selectedRepository.name);
+    console.log('Selected commits:', Array.from(selectedCommits));
     
     try {
-      await cleanupMutation.mutateAsync(selectedRepository.id);
+      // Send the selected commit SHAs to the cleanup endpoint
+      const response = await apiRequest('POST', `/api/repositories/${selectedRepository.id}/cleanup`, {
+        commitShas: Array.from(selectedCommits)
+      });
+      const result = await response.json();
+      
+      console.log('Cleanup result:', result);
+      
+      // Clear selections and close dialog
+      setSelectedCommits(new Set());
+      setCurrentCommits([]);
       setCleanupDialogOpen(false);
       setSelectedRepository(null);
+      
+      // Refresh the repositories list
+      refetch();
     } catch (error) {
       console.error('Failed to cleanup repository:', error);
     }

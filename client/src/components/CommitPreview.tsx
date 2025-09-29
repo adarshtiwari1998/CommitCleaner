@@ -8,7 +8,8 @@ export interface ReplitCommit {
   sha: string;
   message: string;
   author: string;
-  date: Date;
+  date: string;
+  url?: string;
   isReplitGenerated: boolean;
   replitPrompt?: string;
 }
@@ -126,7 +127,7 @@ export function CommitPreview({
                     <div className="flex items-center gap-1">
                       <Calendar className="h-3 w-3" />
                       <span data-testid={`text-commit-date-${commit.sha}`}>
-                        {formatDistanceToNow(commit.date, { addSuffix: true })}
+                        {formatDistanceToNow(new Date(commit.date), { addSuffix: true })}
                       </span>
                     </div>
                   </div>

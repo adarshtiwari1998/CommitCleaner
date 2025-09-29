@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
@@ -17,8 +18,20 @@ import {
   ExternalLink
 } from "lucide-react";
 
+interface GitHubStatus {
+  connected: boolean;
+  username?: string;
+  name?: string;
+  avatar?: string;
+  permissions?: string[];
+  error?: string;
+}
+
 export default function Settings() {
-  const [githubConnected, setGithubConnected] = useState(true);
+  // Fetch real GitHub connection status
+  const { data: githubStatus, isLoading: isLoadingGithub } = useQuery<GitHubStatus>({
+    queryKey: ['/api/github/status'],
+  });
   const [autoBackup, setAutoBackup] = useState(true);
   const [notifications, setNotifications] = useState(true);
   const [batchSize, setBatchSize] = useState("10");
@@ -36,12 +49,14 @@ export default function Settings() {
 
   const handleDisconnectGithub = () => {
     console.log('Disconnecting GitHub account');
-    setGithubConnected(false);
+    // Note: Actual disconnection would need to be handled through Replit Connectors
+    alert('GitHub disconnection must be done through Replit Settings');
   };
 
   const handleConnectGithub = () => {
     console.log('Connecting GitHub account');
-    setGithubConnected(true);
+    // Note: Actual connection would need to be handled through Replit Connectors
+    alert('GitHub connection must be set up through Replit Connectors');
   };
 
   const handleClearAllData = () => {
@@ -80,19 +95,21 @@ export default function Settings() {
               <div>
                 <p className="font-medium">Connection Status</p>
                 <p className="text-sm text-muted-foreground">
-                  {githubConnected ? 'Connected to GitHub account' : 'Not connected'}
+                  {isLoadingGithub ? 'Checking connection...' : 
+                   githubStatus?.connected ? 'Connected to GitHub account' : 'Not connected'}
                 </p>
               </div>
-              <Badge variant={githubConnected ? "secondary" : "destructive"} data-testid="badge-github-status">
-                {githubConnected ? 'Connected' : 'Disconnected'}
+              <Badge variant={githubStatus?.connected ? "secondary" : "destructive"} data-testid="badge-github-status">
+                {isLoadingGithub ? 'Loading...' : 
+                 githubStatus?.connected ? 'Connected' : 'Disconnected'}
               </Badge>
             </div>
             
-            {githubConnected ? (
+            {githubStatus?.connected ? (
               <div className="space-y-3">
                 <div className="text-sm text-muted-foreground">
-                  <p>Account: <span className="font-mono">github-user</span></p>
-                  <p>Permissions: Repository access, User info</p>
+                  <p>Account: <span className="font-mono">{githubStatus.username || 'Unknown'}</span></p>
+                  <p>Permissions: {githubStatus.permissions?.join(', ') || 'Repository access, User info'}</p>
                 </div>
                 <Button 
                   variant="outline" 
@@ -103,13 +120,19 @@ export default function Settings() {
                 </Button>
               </div>
             ) : (
-              <Button 
-                onClick={handleConnectGithub}
-                data-testid="button-connect-github"
-              >
-                <Github className="h-4 w-4 mr-2" />
-                Connect GitHub Account
-              </Button>
+              <div className="space-y-3">
+                {githubStatus?.error && (
+                  <p className="text-sm text-destructive">{githubStatus.error}</p>
+                )}
+                <Button 
+                  onClick={handleConnectGithub}
+                  data-testid="button-connect-github"
+                  disabled={isLoadingGithub}
+                >
+                  <Github className="h-4 w-4 mr-2" />
+                  {isLoadingGithub ? 'Checking...' : 'Connect GitHub Account'}
+                </Button>
+              </div>
             )}
           </CardContent>
         </Card>

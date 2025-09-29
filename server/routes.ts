@@ -138,7 +138,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // POST /api/repositories/:id/cleanup - Clean up Replit commits (placeholder)
+  // POST /api/repositories/:id/cleanup - Clean up Replit commits
   app.post("/api/repositories/:id/cleanup", async (req, res) => {
     try {
       const repository = await storage.getRepository(req.params.id);
@@ -146,13 +146,92 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ error: "Repository not found" });
       }
 
-      // For now, return an error indicating this feature is not yet implemented
+      // Validate request body
+      const cleanupSchema = z.object({
+        commitShas: z.array(z.string()),
+      });
+      
+      const { commitShas } = cleanupSchema.parse(req.body);
+      
+      if (commitShas.length === 0) {
+        return res.status(400).json({ error: "No commits specified for cleanup" });
+      }
+
+      // Update status to processing
+      await storage.updateRepository(req.params.id, { 
+        status: "processing" 
+      });
+
+      try {
+        // Delete the specified commits
+        const { deleteReplitCommits } = await import("./github");
+        const result = await deleteReplitCommits(repository.url, commitShas);
+        
+        // Update repository status based on result
+        const updatedRepo = await storage.updateRepository(req.params.id, {
+          status: result.deletedCount > 0 ? "clean" : "error",
+          replitCommitsFound: Math.max(0, (repository.replitCommitsFound || 0) - result.deletedCount),
+        });
+
+        res.json({
+          repository: updatedRepo,
+          deletedCount: result.deletedCount,
+          errors: result.errors,
+        });
+      } catch (cleanupError: any) {
+        // Update status to error if cleanup fails
+        await storage.updateRepository(req.params.id, { 
+          status: "error" 
+        });
+        throw cleanupError;
+      }
+    } catch (error: any) {
+      console.error("Failed to cleanup repository:", error);
+      if (error.message.includes("Repository not found")) {
+        return res.status(404).json({ error: "Repository not found or you do not have access to it" });
+      }
+      if (error.message.includes("GitHub not connected")) {
+        return res.status(401).json({ error: "GitHub authentication required. Please connect your GitHub account." });
+      }
+      res.status(500).json({ error: error.message || "Failed to cleanup repository" });
+    }
+  });
+
+  // GET /api/github/status - Check GitHub connection status
+  app.get("/api/github/status", async (req, res) => {
+    try {
+      const { getUncachableGitHubClient } = await import("./github");
+      const client = await getUncachableGitHubClient();
+      
+      // Test the connection by getting user info
+      const { data: user } = await client.rest.users.getAuthenticated();
+      
+      res.json({
+        connected: true,
+        username: user.login,
+        name: user.name,
+        avatar: user.avatar_url,
+        permissions: ['Repository access', 'User info']
+      });
+    } catch (error: any) {
+      console.error("GitHub connection check failed:", error);
+      res.json({
+        connected: false,
+        error: error.message
+      });
+    }
+  });
+
+  // POST /api/github/disconnect - Disconnect GitHub (placeholder)
+  app.post("/api/github/disconnect", async (req, res) => {
+    try {
+      // Note: This would need to revoke the token through Replit Connectors
       res.status(501).json({ 
-        error: "Commit cleanup feature is not yet implemented for safety reasons. This would require git rebase operations that could damage repository history." 
+        error: "GitHub disconnection must be done through Replit Settings" 
       });
     } catch (error) {
-      console.error("Failed to cleanup repository:", error);
-      res.status(500).json({ error: "Failed to cleanup repository" });
+      console.error("Failed to disconnect GitHub:", error);
+      res.status(500).json({ error: "Failed to disconnect GitHub" });
     }
   });
 
